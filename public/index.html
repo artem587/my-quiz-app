@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>School Quiz App</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f0f2f5; }
+        .hidden { display: none !important; }
+        
+        /* Кнопки */
+        .btn { padding: 10px 15px; border: none; border-radius: 5px; cursor: pointer; color: white; margin: 5px; }
+        .btn-blue { background: #007bff; }
+        .btn-green { background: #28a745; }
+        .btn-red { background: #dc3545; }
+        .btn-gray { background: #6c757d; }
+        
+        /* Карточки */
+        .card { background: white; padding: 20px; margin-bottom: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        
+        /* Форма входа */
+        .login-box { max-width: 400px; margin: 50px auto; text-align: center; }
+        input { width: 100%; padding: 10px; margin: 5px 0; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        
+        /* Заголовок */
+        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+
+    <div id="view-login" class="login-box">
+        <h2>📚 Вход в систему</h2>
+        <div class="card">
+            <input type="text" id="login-username" placeholder="Логин (admin или student)">
+            <input type="password" id="login-password" placeholder="Пароль">
+            <button class="btn btn-blue" style="width:100%" onclick="login()">Войти</button>
+            <p id="login-error" style="color:red; display:none;">Ошибка входа!</p>
+        </div>
+    </div>
+
+    <div id="app-content" class="hidden">
+        
+        <header>
+            <h2 id="welcome-msg">Привет!</h2>
+            <button class="btn btn-gray" onclick="logout()">Выйти</button>
+        </header>
+
+        <div id="admin-controls" class="hidden" style="margin-bottom: 20px;">
+            <button class="btn btn-green" onclick="showCreate()">+ Создать новый тест</button>
+            <button class="btn btn-blue" onclick="showList()">Список тестов</button>
+        </div>
+
+        <div id="view-list" class="hidden">
+            <h3>Доступные тесты</h3>
+            <div id="quiz-container">Loading...</div>
+        </div>
+
+        <div id="view-create" class="hidden">
+            <h3>Создание теста</h3>
+            <input type="text" id="new-title" placeholder="Название">
+            <textarea id="new-desc" placeholder="Описание" style="width:100%; height:60px; margin-bottom:10px;"></textarea>
+            <div id="questions-wrapper"></div>
+            <button class="btn btn-gray" onclick="addQuestionUI()">+ Вопрос</button>
+            <button class="btn btn-green" onclick="saveQuiz()">Сохранить</button>
+            <button class="btn btn-red" onclick="showList()">Отмена</button>
+        </div>
+
+        <div id="view-play" class="hidden">
+            <h2 id="play-title"></h2>
+            <div id="play-area"></div>
+            <button class="btn btn-blue" onclick="checkResults()">Проверить</button>
+            <button class="btn btn-gray" onclick="showList()">Назад</button>
+            <div id="play-score" style="margin-top:20px; font-weight:bold; font-size:1.2em;"></div>
+        </div>
+
+    </div>
+
+    <script>
+        const API = '/api/quizzes';
+        let currentUserRole = null; // 'admin' или 'student'
+        let createQuestions = [];
+        let playQuestions = [];
+
+        // --- ЛОГИКА АВТОРИЗАЦИИ ---
+        async function login() {
+            const u = document.getElementById('login-username').value;
+            const p = document.getElementById('login-password').value;
+
+            const res = await fetch('/api/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ username: u, password: p })
+            });
+            
+            const data = await res.json();
+
+            if (data.success) {
+                currentUserRole = data.role;
+                document.getElementById('view-login').classList.add('hidden');
+                document.getElementById('app-content').classList.remove('hidden');
+                document.getElementById('welcome-msg').innerText = `Привет, ${data.username}!`;
+                
+                // Если Админ - показываем кнопки управления
+                if (currentUserRole === 'admin') {
+                    document.getElementById('admin-controls').classList.remove('hidden');
+                } else {
+                    document.getElementById('admin-controls').classList.add('hidden');
+                }
+
+                showList();
+            } else {
+                document.getElementById('login-error').style.display = 'block';
+            }
+        }
+
+        function logout() {
+            location.reload(); // Самый простой способ выйти - перезагрузить страницу
+        }
+
+        // --- НАВИГАЦИЯ ---
+        function showView(name) {
+            ['view-list', 'view-create', 'view-play'].forEach(v => document.getElementById(v).classList.add('hidden'));
+            document.getElementById(`view-${name}`).classList.remove('hidden');
+        }
+
+        function showList() {
+            showView('list');
+            loadQuizzes();
+        }
+
+        function showCreate() {
+            createQuestions = [];
+            document.getElementById('questions-wrapper').innerHTML = '';
+            document.getElementById('new-title').value = '';
+            showView('create');
+        }
+
+        // --- СПИСОК ТЕСТОВ ---
+        async function loadQuizzes() {
+            const res = await fetch(API);
+            const data = await res.json();
+            const container = document.getElementById('quiz-container');
+
+            if (data.length === 0) {
+                container.innerHTML = '<p>Тестов пока нет.</p>';
+                return;
+            }
+
+            container.innerHTML = data.map(q => `
+                <div class="card" style="display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <h3>${q.title}</h3>
+                        <p>${q.description || ''}</p>
+                    </div>
+                    <div>
+                        <button class="btn btn-blue" onclick="startQuiz('${q._id}')">Начать</button>
+                        ${currentUserRole === 'admin' ? 
+                          `<button class="btn btn-red" onclick="deleteQuiz('${q._id}')">Удалить</button>` : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // --- УДАЛЕНИЕ (Только Админ) ---
+        async function deleteQuiz(id) {
+            if (!confirm('Точно удалить этот тест?')) return;
+
+            await fetch(`${API}/${id}`, {
+                method: 'DELETE',
+                headers: { 'x-user-role': currentUserRole } // Посылаем роль на сервер для проверки
+            });
+            loadQuizzes();
+        }
+
+        // --- СОЗДАНИЕ (Только Админ) ---
+        function addQuestionUI() {
+            const idx = createQuestions.length;
+            createQuestions.push({ text: '', options: ['', '', '', ''], correct: 0 });
+            
+            const div = document.createElement('div');
+            div.className = 'card';
+            div.innerHTML = `
+                <h4>Вопрос ${idx+1}</h4>
+                <input type="text" placeholder="Текст вопроса" oninput="createQuestions[${idx}].text=this.value">
+                ${[0,1,2,3].map(i => `
+                    <div style="display:flex; gap:5px;">
+                        <input type="radio" name="r${idx}" ${i===0?'checked':''} onchange="createQuestions[${idx}].correct=${i}">
+                        <input type="text" placeholder="Ответ ${i+1}" oninput="createQuestions[${idx}].options[${i}]=this.value">
+                    </div>
+                `).join('')}
+            `;
+            document.getElementById('questions-wrapper').appendChild(div);
+        }
+
+        async function saveQuiz() {
+            const title = document.getElementById('new-title').value;
+            if (!title) return alert('Введите название!');
+
+            await fetch(API, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'x-user-role': currentUserRole // Проверка прав
+                },
+                body: JSON.stringify({ 
+                    title, 
+                    description: document.getElementById('new-desc').value,
+                    questions: createQuestions 
+                })
+            });
+            showList();
+        }
+
+        // --- ПРОХОЖДЕНИЕ ---
+        async function startQuiz(id) {
+            const res = await fetch(`${API}/${id}`);
+            const quiz = await res.json();
+            playQuestions = quiz.questions;
+            
+            document.getElementById('play-title').innerText = quiz.title;
+            document.getElementById('play-score').innerText = '';
+            
+            const area = document.getElementById('play-area');
+            area.innerHTML = playQuestions.map((q, i) => `
+                <div class="card" id="card-${i}">
+                    <h4>${i+1}. ${q.text}</h4>
+                    ${q.options.map((opt, optI) => `
+                        <label style="display:block; padding:5px;">
+                            <input type="radio" name="q${i}" value="${optI}"> ${opt}
+                        </label>
+                    `).join('')}
+                </div>
+            `).join('');
+            
+            showView('play');
+        }
+
+        function checkResults() {
+            let score = 0;
+            playQuestions.forEach((q, i) => {
+                const selected = document.querySelector(`input[name="q${i}"]:checked`);
+                const card = document.getElementById(`card-${i}`);
+                card.style.border = "none";
+
+                if (selected) {
+                    if (parseInt(selected.value) === q.correct) {
+                        score++;
+                        card.style.border = "2px solid green";
+                    } else {
+                        card.style.border = "2px solid red";
+                    }
+                }
+            });
+            document.getElementById('play-score').innerText = `Результат: ${score} из ${playQuestions.length}`;
+        }
+    </script>
+</body>
+</html>
